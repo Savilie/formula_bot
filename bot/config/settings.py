@@ -1,12 +1,18 @@
 from dotenv import load_dotenv
 import os
+import logging
 
 load_dotenv()
 
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 class Settings:
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    ADMIN_UID = int(os.getenv("ADMIN_UID"))
+    ADMIN_UID = [int(uid.strip()) for uid in os.getenv("ADMIN_UID").split(",")]
 
     # MySQL настройки
     DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -17,3 +23,5 @@ class Settings:
 
 
 settings = Settings()
+
+logger.info(str(settings.ADMIN_UID))

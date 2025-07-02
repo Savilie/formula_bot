@@ -2,3 +2,5 @@
 .env
 /uploads/
 portfolio.db
+/__pycache__/
+/.idea/

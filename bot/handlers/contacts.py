@@ -15,8 +15,9 @@ async def show_contacts(message: types.Message):
         return
 
     response = (
-        f"📞 Телефон: {contacts.phone}\n"
-        f"🏢 Адрес: {contacts.address}\n"
-        f"🌐 Сайт: {contacts.website}"
+        f"📞 <b>Телефон:</b> {contacts.phone}\n"
+        f"📧 <b>Email:</b> {contacts.email}\n"
+        f"🏢 <b>Адрес:</b> {contacts.address}\n"
+        f"🌐 <b>Сайт:</b> {contacts.website}"
     )
-    await message.answer(response)
+    await message.answer(response, parse_mode="HTML")

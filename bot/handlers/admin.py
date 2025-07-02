@@ -3,6 +3,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
+
 from bot.database import get_db
 from bot.handlers.portfolio import PortfolioStates, show_project
 from bot.models import PortfolioItem, User, Contact
@@ -15,7 +17,7 @@ router = Router()
 
 # Проверка прав администратора
 def is_admin(user_id: int) -> bool:
-    return user_id == settings.ADMIN_UID
+    return user_id in settings.ADMIN_UID
 
 
 # Клавиатура для отмены удаления
@@ -23,6 +25,13 @@ def get_cancel_delete_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отменить удаление", callback_data="cancel_delete")]
     ])
+
+
+# Клавиатура с кнопкой отмены
+def get_cancel_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="❌ Отменить добавление")
+    return builder.as_markup(resize_keyboard=True)
 
 
 # Состояния для добавления проекта
@@ -37,13 +46,16 @@ class DeletePortfolioState(StatesGroup):
     waiting_for_project_id = State()
 
 
+# Состояния для рассылки сообщений
 class BroadcastState(StatesGroup):
     waiting_for_message = State()
     waiting_for_confirmation = State()
 
 
+# Состояния для редактирования контактов
 class EditContactsState(StatesGroup):
     waiting_for_phone = State()
+    waiting_for_email = State()
     waiting_for_address = State()
     waiting_for_website = State()
 
@@ -61,18 +73,42 @@ async def admin_panel(message: types.Message, state: FSMContext | None = None):
 
     await message.answer(
         "🔐 Панель администратора:",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
+
 
 # Обработчик кнопки "Добавить проект"
 @router.message(F.text == "Добавить проект")
 async def add_project_command(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("🚫 Доступ запрещен!")
         return
 
-    await message.answer("Введите название проекта:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer(
+        "Введите название проекта (или отмените):",
+        reply_markup=get_cancel_keyboard()
+    )
     await state.set_state(AddPortfolioState.waiting_for_title)
+
+
+# Обработчик отмены
+@router.message(
+    AddPortfolioState.waiting_for_title,
+    F.text == "❌ Отменить добавление"
+)
+@router.message(
+    AddPortfolioState.waiting_for_description,
+    F.text == "❌ Отменить добавление"
+)
+@router.message(
+    AddPortfolioState.waiting_for_photo,
+    F.text == "❌ Отменить добавление"
+)
+async def cancel_add_project(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Добавление проекта отменено",
+        reply_markup=get_admin_keyboard(message.from_user.id)
+    )
 
 
 # Шаг 1: Получаем название проекта
@@ -122,7 +158,7 @@ async def process_photo(message: types.Message, state: FSMContext):
         "✅ Проект успешно добавлен!\n"
         f"Название: {data['title']}\n"
         f"Описание: {data['description']}",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
     await state.clear()
 
@@ -182,7 +218,7 @@ async def process_delete_project(message: types.Message, state: FSMContext):
 
     await message.answer(
         f"✅ Проект '{project.title}' удален!",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
     await state.clear()
 
@@ -211,6 +247,7 @@ async def show_projects_list(message: types.Message, state: FSMContext):
     await show_project(message, state)
 
 
+# Обработчик рассылки
 @router.message(F.text == "Сделать рассылку")
 async def start_broadcast(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -224,6 +261,7 @@ async def start_broadcast(message: types.Message, state: FSMContext):
     await state.set_state(BroadcastState.waiting_for_message)
 
 
+# Подтвердить / отменить рассылку
 @router.message(BroadcastState.waiting_for_message)
 async def process_broadcast_message(message: types.Message, state: FSMContext):
     # Сохраняем сообщение для рассылки
@@ -260,16 +298,13 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
     await state.set_state(BroadcastState.waiting_for_confirmation)
 
 
+# Подтвердить рассылку
 @router.callback_query(BroadcastState.waiting_for_confirmation, F.data == "confirm_broadcast")
-async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
+async def confirm_broadcast(message: types.Message, callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()  # Убираем кнопки
     data = await state.get_data()
-
-    # Здесь нужно добавить логику получения всех пользователей
-    # Например, если у вас есть модель User в базе данных:
     db = next(get_db())
-    users = db.query(User).all()  # Замените User на вашу модель
-
+    users = db.query(User).all()
     success = 0
     errors = 0
 
@@ -277,7 +312,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
         try:
             if data.get('has_photo'):
                 await callback.bot.send_photo(
-                    chat_id=user.user_id,  # Замените на поле с ID пользователя
+                    chat_id=user.user_id,
                     photo=data['photo'],
                     caption=data.get('caption', '')
                 )
@@ -295,43 +330,80 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
         f"✅ Рассылка завершена!\n"
         f"Успешно отправлено: {success}\n"
         f"Не удалось отправить: {errors}",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
     await state.clear()
 
 
+# Отменить рассылку
 @router.callback_query(BroadcastState.waiting_for_confirmation, F.data == "cancel_broadcast")
-async def cancel_broadcast(callback: types.CallbackQuery, state: FSMContext):
+async def cancel_broadcast(message: types.Message, callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("❌ Рассылка отменена")
     await callback.message.answer(
         "🔐 Панель администратора:",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
     await state.clear()
 
 
-# Обработчик начала редактирования
 @router.message(F.text == "Редактировать контакты")
 async def start_edit_contacts(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("🚫 Доступ запрещен!")
         return
 
     await message.answer(
-        "Введите новый телефон:",
-        reply_markup=types.ReplyKeyboardRemove()
+        "Введите новый телефон (или отмените):",
+        reply_markup=get_cancel_keyboard()
     )
     await state.set_state(EditContactsState.waiting_for_phone)
 
 
+# Обработчик отмены для контактов
+@router.message(
+    EditContactsState.waiting_for_phone,
+    F.text == "❌ Отменить добавление"
+)
+@router.message(
+    EditContactsState.waiting_for_email,
+    F.text == "❌ Отменить добавление"
+)
+@router.message(
+    EditContactsState.waiting_for_address,
+    F.text == "❌ Отменить добавление"
+)
+@router.message(
+    EditContactsState.waiting_for_website,
+    F.text == "❌ Отменить добавление"
+)
+async def cancel_edit_contacts(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Редактирование контактов отменено",
+        reply_markup=get_admin_keyboard(message.from_user.id)
+    )
+
+
 # Обработчики для каждого поля
+# Обработчик поля адреса
 @router.message(EditContactsState.waiting_for_phone, F.text)
 async def process_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text)
-    await message.answer("Теперь введите новый адрес:")
+    await message.answer("Теперь введите email:")
+    await state.set_state(EditContactsState.waiting_for_email)
+
+
+@router.message(EditContactsState.waiting_for_email, F.text)
+async def process_email(message: types.Message, state: FSMContext):
+    if "@" not in message.text:  # Простейшая валидация
+        await message.answer("Неверный формат email. Попробуйте еще раз:")
+        return
+
+    await state.update_data(email=message.text)
+    await message.answer("Теперь введите адрес:")
     await state.set_state(EditContactsState.waiting_for_address)
 
 
+# Обработчик поля ссылки
 @router.message(EditContactsState.waiting_for_address, F.text)
 async def process_address(message: types.Message, state: FSMContext):
     await state.update_data(address=message.text)
@@ -344,15 +416,16 @@ async def process_website(message: types.Message, state: FSMContext):
     contact_data = await state.get_data()
     db = next(get_db())
 
-    # Обновляем или создаем контакты
     contacts = db.query(Contact).first()
     if contacts:
         contacts.phone = contact_data['phone']
+        contacts.email = contact_data['email']  # Сохраняем email
         contacts.address = contact_data['address']
         contacts.website = message.text
     else:
         contacts = Contact(
             phone=contact_data['phone'],
+            email=contact_data['email'],  # Новое поле
             address=contact_data['address'],
             website=message.text
         )
@@ -361,11 +434,12 @@ async def process_website(message: types.Message, state: FSMContext):
     db.commit()
 
     await message.answer(
-        "✅ Контакты успешно обновлены!\n"
+        "✅ Контакты обновлены!\n"
         f"Телефон: {contact_data['phone']}\n"
+        f"Email: {contact_data['email']}\n"
         f"Адрес: {contact_data['address']}\n"
         f"Сайт: {message.text}",
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(message.from_user.id)
     )
     await state.clear()
 
@@ -380,3 +454,57 @@ async def return_to_menu(message: types.Message, state: FSMContext):
     )
 
 
+@router.message(Command("admin_add"))
+async def add_admin(message: types.Message):
+    if message.from_user.id != settings.ADMIN_UID[0]:
+        return await message.answer("❌ Недостаточно прав")
+
+    try:
+        new_admin_id = int(message.text.split()[1])
+        if new_admin_id in settings.ADMIN_UID:
+            return await message.answer("⚠️ Этот пользователь уже администратор")
+
+        settings.ADMIN_UID.append(new_admin_id)
+        # Обновляем .env файл
+        with open(".env", "a") as f:
+            f.write(f",{new_admin_id}")
+
+        await message.answer(f"✅ Пользователь {new_admin_id} добавлен в админы")
+    except (IndexError, ValueError):
+        await message.answer("Использование: /admin_add <user_id>")
+
+
+@router.message(Command("admin_remove"))
+async def remove_admin(message: types.Message):
+    if message.from_user.id != settings.ADMIN_UID[0]:
+        return await message.answer("❌ Недостаточно прав")
+
+    try:
+        admin_id = int(message.text.split()[1])
+        if admin_id not in settings.ADMIN_UID:
+            return await message.answer("⚠️ Этот пользователь не администратор")
+
+        settings.ADMIN_UID.remove(admin_id)
+        # Обновляем .env файл
+        with open(".env", "r+") as f:
+            lines = f.readlines()
+            f.seek(0)
+            for line in lines:
+                if line.startswith("ADMIN_UIDS="):
+                    line = f"ADMIN_UIDS={','.join(map(str, settings.ADMIN_UIDS))}\n"
+                f.write(line)
+            f.truncate()
+
+        await message.answer(f"✅ Пользователь {admin_id} удалён из админов")
+    except (IndexError, ValueError):
+        await message.answer("Использование: /admin_remove <user_id>")
+
+
+@router.message(Command("admin_list"))
+@router.message(F.text == "Управление админами")
+async def list_admins(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return await message.answer("❌ Недостаточно прав")
+
+    admins_list = "\n".join(f"👉 {uid}" for uid in settings.ADMIN_UID)
+    await message.answer(f"📋 Список администраторов:\n{admins_list}")

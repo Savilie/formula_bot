@@ -3,7 +3,7 @@ from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButto
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from bot.database import get_db
-from bot.models import PortfolioItem
+from bot.models import PortfolioItem, Contact
 import os
 
 router = Router()
@@ -28,7 +28,7 @@ def get_portfolio_keyboard(current_index: int, total_items: int):
 
 
 # Обработчик команды "Портфолио"
-@router.message(F.text == "Посмотреть портфолио")
+@router.message(F.text == "Примеры работ")
 async def show_portfolio_start(message: types.Message, state: FSMContext):
     db = next(get_db())
     projects = db.query(PortfolioItem).all()
@@ -58,9 +58,16 @@ async def show_project(message: types.Message | types.CallbackQuery, state: FSMC
 
     project = projects[current_index]
 
+    db = next(get_db())
+    contacts = db.query(Contact).first()
+
     try:
         photo = FSInputFile(project['image_url'])
-        caption = f"<b>{project['title']}</b>\n\n{project['description']}"
+        caption = (
+            f"<b>{project['title']}</b>\n\n"
+            f"{project['description']}\n\n"
+            f"📞 Контакты: {contacts.phone if contacts else 'не указаны'}"
+        )
 
         keyboard = get_portfolio_keyboard(current_index, total_items)
 

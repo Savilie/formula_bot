@@ -31,7 +31,8 @@ def init_db():
             default_contacts = Contact(
                 phone="+7 (XXX) XXX-XX-XX",
                 address="Город, Улица, Дом",
-                website="https://example.com"
+                website="https://example.com",
+                email="mail@example.com"
             )
             db.add(default_contacts)
             db.commit()
